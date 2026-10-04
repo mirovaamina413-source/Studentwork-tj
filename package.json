@@ -1,0 +1,9 @@
+{
+  "name": "studentwork-tj",
+  "private": true,
+  "version": "1.0.0",
+  "description": "StudentWork.tj static app. Start with: python serve.py",
+  "scripts": {
+    "start": "python serve.py"
+  }
+}
