@@ -1,8 +1,30 @@
 import { seedState } from "../data/seed.js";
-import { emptyWeek, escrowEstimate, uid } from "../lib/utils.js";
+import { emptyWeek, employerName, escrowEstimate, isOpenStatus, uid } from "../lib/utils.js";
+import { understandRequest } from "../lib/work.js";
+import { progressFor } from "./progress.js";
 
 const KEY = "studentwork.tj.v1";
-const VIEWS = ["home", "jobs", "employers", "students", "rankings", "studentDash", "employerDash", "safety", "inbox", "notices"];
+const SETTINGS_KEY = "studentwork.tj.settings";
+const VIEWS = ["home", "jobs", "find", "post", "solve", "courses", "tasks", "employers", "students", "rankings", "studentDash", "employerDash", "safety", "inbox", "notices", "settings"];
+
+function defaultSettings() {
+  return { lang: "tg", theme: "indigo", notifications: true, reminders: true, privacyHideRank: false, seenBadges: {}, seenReady: {} };
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return defaultSettings();
+    return { ...defaultSettings(), ...JSON.parse(raw) };
+  } catch {
+    return defaultSettings();
+  }
+}
+
+function persistSettings(settings) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  state = { ...state, settings };
+}
 const DEMO_PHONES = {
   "mehrona@studentwork.tj": "+992 900 110 118",
   "safed@studentwork.tj": "+992 900 220 218",
@@ -55,9 +77,29 @@ function ensureCollections(data) {
       }
     });
   }
+  const wedding = {
+    id: "e5",
+    role: "employer",
+    name: "Манижа Раҳмонова",
+    company: "Тӯйхонаи Ситора",
+    email: "sitora@studentwork.tj",
+    phone: "+992 927 440 118",
+    password: "demo123",
+    city: "Хуҷанд",
+    verified: true,
+    hue: 280,
+    bio: "Тӯйхона барои тӯй ва чорабиниҳои шабона.",
+  };
+  const withWedding = users.some((user) => user.id === "e5") ? users : [...users, wedding];
+  const jobs = (data.jobs || []).map((job) => (
+    job.category === "Пешхизмат" && /тӯй/i.test(job.title || "") && job.employerId === "e3"
+      ? { ...job, employerId: "e5" }
+      : job
+  ));
   return {
     ...data,
-    users,
+    users: withWedding,
+    jobs,
     messages: Array.isArray(data.messages) ? data.messages : [],
     notifications: Array.isArray(data.notifications) ? data.notifications : [],
     transactions,
@@ -89,6 +131,8 @@ let state = {
   booting: true,
   modal: null,
   filters: { q: "", location: "Ҳамаи шаҳрҳо", category: "Ҳама" },
+  cityQuery: "",
+  cityPick: null,
   toast: null,
   activeJobId: null,
   rateCtx: null,
@@ -101,6 +145,9 @@ let state = {
   mapQuery: "",
   selectedJobId: null,
   authError: "",
+  authPhase: null,
+  authWelcome: "",
+  authPeek: false,
   authDraft: { identity: "", email: "", password: "", name: "", org: "", city: "Душанбе", role: "student", phone: "", about: "", skills: [] },
   chatThread: null,
   chatError: "",
@@ -114,6 +161,20 @@ let state = {
   verifyId: "",
   menuOpen: false,
   picker: null,
+  phoneStage: null,
+  phoneSlide: 0,
+  pendingFlow: null,
+  postStep: 1,
+  postDraft: null,
+  postError: "",
+  solveDraft: null,
+  solveError: "",
+  proposalError: "",
+  discover: { category: "Ҳама", city: "Ҳамаи шаҳрҳо", online: "all", min: "", max: "", deadline: "", skill: "Ҳама" },
+  settings: loadSettings(),
+  passwordError: "",
+  accountError: "",
+  achievement: null,
 };
 
 const listeners = new Set();
@@ -139,6 +200,7 @@ export function currentUser() {
 }
 
 function notify(message) {
+  if (state.settings?.notifications === false) return;
   state = { ...state, toast: { id: uid(), message } };
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
@@ -167,13 +229,19 @@ export function patch(partial) {
   emit();
 }
 
+let authTimer = 0;
+
 export function openModal(modal) {
+  clearTimeout(authTimer);
   state = {
     ...state,
     modal,
     menuOpen: false,
     picker: null,
     authError: "",
+    authPhase: null,
+    authWelcome: "",
+    authPeek: false,
     publishError: "",
     applyError: "",
     verifyError: "",
@@ -182,7 +250,70 @@ export function openModal(modal) {
 }
 
 export function closeModal() {
-  state = { ...state, modal: null, picker: null };
+  const welcome = state.authPhase === "success";
+  const user = currentUser();
+  clearTimeout(authTimer);
+  state = { ...state, modal: null, picker: null, achievement: null, authPhase: null, authWelcome: "", authPeek: false };
+  if (welcome && user) {
+    landAfterAuth(user);
+    return;
+  }
+  emit();
+}
+
+function primeBadges() {
+  const user = currentUser();
+  if (!user || user.role !== "student") return;
+  if (state.settings.seenReady?.[user.id]) return;
+  const progress = progressFor(user, state.data);
+  if (!progress) return;
+  persistSettings({
+    ...state.settings,
+    seenReady: { ...state.settings.seenReady, [user.id]: true },
+    seenBadges: { ...state.settings.seenBadges, [user.id]: progress.badges.filter((item) => item.ok).map((item) => item.id) },
+  });
+}
+
+function celebrate() {
+  const user = currentUser();
+  if (!user || user.role !== "student") return;
+  const progress = progressFor(user, state.data);
+  if (!progress) return;
+  if (!state.settings.seenReady?.[user.id]) {
+    primeBadges();
+    return;
+  }
+  const seen = new Set(state.settings.seenBadges?.[user.id] || []);
+  const fresh = progress.badges.filter((item) => item.ok && !seen.has(item.id));
+  if (!fresh.length) return;
+  persistSettings({
+    ...state.settings,
+    seenBadges: { ...state.settings.seenBadges, [user.id]: [...seen, ...fresh.map((item) => item.id)] },
+  });
+  state = { ...state, modal: "achievement", achievement: fresh[0] };
+}
+
+export function updateSettings(partial) {
+  persistSettings({ ...state.settings, ...partial });
+  emit();
+}
+
+export function changePassword(current, next) {
+  const user = currentUser();
+  if (!user) return;
+  if (String(user.password || "") !== String(current || "")) {
+    state = { ...state, passwordError: "Рамзи ҳозира нодуруст аст." };
+    emit();
+    return;
+  }
+  if (String(next || "").length < 6) {
+    state = { ...state, passwordError: "Рамзи нав ҳадди ақал 6 аломат бошад." };
+    emit();
+    return;
+  }
+  updateUser({ password: next });
+  state = { ...state, passwordError: "" };
+  notify("Рамз иваз шуд.");
   emit();
 }
 
@@ -196,18 +327,11 @@ export function login(identity, password) {
   });
   state = { ...state, authDraft: { ...state.authDraft, identity, email: raw.includes("@") ? raw : state.authDraft.email, password } };
   if (!user) {
-    state = { ...state, authError: "Почта, рақам ё рамз нодуруст аст." };
+    state = { ...state, authError: "Рамз ё почта нодуруст аст.", authPhase: "error" };
     emit();
     return;
   }
-  state = {
-    ...state,
-    data: { ...state.data, sessionUserId: user.id },
-    modal: null,
-    authError: "",
-  };
-  notify(`Хуш омадед, ${user.name.split(" ")[0]}!`);
-  go(user.role === "employer" ? "employerDash" : "studentDash");
+  welcomeUser(user);
 }
 
 export function signup(form) {
@@ -242,22 +366,69 @@ export function signup(form) {
     skills: student ? skills : [],
     availability: emptyWeek(),
     experience: 0,
-    university: "",
+    university: student ? String(form.university || "").trim() : "",
     studentId: "",
     company,
     hue: 140 + Math.floor(Math.random() * 80),
   };
   state = {
     ...state,
-    data: { ...state.data, users: [...state.data.users, user], sessionUserId: user.id },
-    modal: null,
+    data: { ...state.data, users: [...state.data.users, user] },
   };
-  notify("Бақайдгирӣ анҷом ёфт.");
-  go(user.role === "employer" ? "employerDash" : "studentDash");
+  welcomeUser(user);
+}
+
+function welcomeUser(user) {
+  const hello = String(user.name || "").trim().split(/\s+/)[0] || "меҳмон";
+  const animated = state.modal === "login" || state.modal === "signup";
+  if (!animated) {
+    state = {
+      ...state,
+      data: { ...state.data, sessionUserId: user.id },
+      modal: null,
+      authError: "",
+      authPhase: null,
+      authWelcome: "",
+    };
+    primeBadges();
+    celebrate();
+    notify(`Хуш омадед, ${hello}!`);
+    landAfterAuth(user);
+    return;
+  }
+  state = {
+    ...state,
+    data: { ...state.data, sessionUserId: user.id },
+    authError: "",
+    authPhase: "success",
+    authWelcome: hello,
+  };
+  primeBadges();
+  emit();
+  clearTimeout(authTimer);
+  authTimer = setTimeout(() => {
+    if (state.authPhase !== "success") return;
+    const live = currentUser();
+    state = { ...state, modal: null, authPhase: null, authWelcome: "" };
+    celebrate();
+    notify(`Хуш омадед, ${hello}!`);
+    if (live) landAfterAuth(live);
+  }, 1200);
+}
+
+function landAfterAuth(user) {
+  const flow = state.pendingFlow;
+  state = { ...state, pendingFlow: null };
+  if (flow === "find" || flow === "post" || flow === "solve") {
+    if (flow === "post") state = { ...state, postStep: 1, postDraft: null, postError: "" };
+    go(flow);
+    return;
+  }
+  go(user.role === "employer" ? "employerDash" : user.role === "admin" ? "safety" : "studentDash");
 }
 
 function failAuth(message) {
-  state = { ...state, authError: message };
+  state = { ...state, authError: message, authPhase: "error" };
   emit();
 }
 
@@ -352,7 +523,7 @@ export function openApply(jobId) {
     emit();
     return;
   }
-  if (!job || job.status !== "open") {
+  if (!job || !isOpenStatus(job.status)) {
     notify(job?.status === "filled" ? "Ин ҷой аллакай пур шудааст." : "Ин кор дастрас нест.");
     emit();
     return;
@@ -387,6 +558,7 @@ export function applyToJob(jobId, message) {
     modal: null,
   };
   notify("Дархост фиристода шуд. Корфармо онро мебинад.");
+  celebrate();
   emit();
 }
 
@@ -454,6 +626,7 @@ export function setApplicationStatus(appId, status) {
     completed: "Кор анҷом ёфт. Акнун ҳар ду тараф метавонанд баҳо диҳанд.",
   };
   if (messages[status]) notify(messages[status]);
+  celebrate();
   emit();
 }
 
@@ -492,6 +665,7 @@ export function addRating(comment) {
     modal: null,
   };
   notify("Баҳо сабт шуд. Ташаккур!");
+  celebrate();
   emit();
 }
 
@@ -511,6 +685,7 @@ export function toggleSave(jobId) {
   const savedJobs = exists ? saved.filter((item) => item !== exists) : [{ id: uid(), userId: user.id, jobId, createdAt: Date.now() }, ...saved];
   state = { ...state, data: { ...state.data, savedJobs } };
   notify(exists ? "Аз захира гирифта шуд." : "Кор захира шуд.");
+  celebrate();
   emit();
 }
 
@@ -605,5 +780,306 @@ export function verifyStudent(studentId) {
     return;
   }
   updateUser({ verified: true, studentId: studentId.trim() });
+  celebrate();
   notify("Донишҷӯи тасдиқшуда");
+  emit();
 }
+
+function blankPost(user) {
+  const now = new Date();
+  const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return {
+    title: "",
+    description: "",
+    category: "СММ & Дизайн",
+    skills: [],
+    budget: "",
+    payType: "fixed",
+    deadline: today,
+    online: true,
+    city: user?.city || "Душанбе",
+  };
+}
+
+export function startFlow(flow) {
+  const user = currentUser();
+  if (!user) {
+    state = { ...state, pendingFlow: flow };
+    notify("Барои ин кор аввал ворид шавед. Ҳамон ҳисоб ҳам донишҷӯ ва ҳам фармоишгар мемонад.");
+    openModal("login");
+    return;
+  }
+  if (flow === "post") state = { ...state, postStep: 1, postDraft: blankPost(user), postError: "" };
+  if (flow === "solve") state = { ...state, solveDraft: null, solveError: "" };
+  go(flow);
+}
+
+export function setDiscover(partial) {
+  state = { ...state, discover: { ...state.discover, ...partial } };
+  emit();
+}
+
+export function savePost(input, step) {
+  const user = currentUser();
+  if (!user) return startFlow("post");
+  const draft = { ...(state.postDraft || blankPost(user)), ...input, skills: state.postDraft?.skills || [] };
+  if (step === 2) {
+    if (String(draft.title || "").trim().length < 4) return failPost(draft, "Номи корро равшантар нависед.");
+    if (String(draft.description || "").trim().length < 12) return failPost(draft, "Тавсифро каме пурратар нависед.");
+    if (!draft.category) return failPost(draft, "Категорияро интихоб кунед.");
+    if (!(draft.skills || []).length) return failPost(draft, "Ақаллан як маҳоратро интихоб кунед.");
+  }
+  if (step === 3) {
+    if (!draft.budget || Number(draft.budget) <= 0) return failPost(draft, "Буҷетро нависед.");
+    if (!draft.deadline) return failPost(draft, "Мӯҳлатро интихоб кунед.");
+    if (!draft.online && !draft.city) return failPost(draft, "Шаҳрро интихоб кунед.");
+  }
+  state = { ...state, postDraft: draft, postStep: step, postError: "" };
+  emit();
+}
+
+function failPost(draft, message) {
+  state = { ...state, postDraft: draft, postError: message };
+  emit();
+}
+
+export function togglePostSkill(skill) {
+  const user = currentUser();
+  const draft = { ...(state.postDraft || blankPost(user)) };
+  const skills = new Set(draft.skills || []);
+  if (skills.has(skill)) skills.delete(skill);
+  else skills.add(skill);
+  state = { ...state, postDraft: { ...draft, skills: [...skills] } };
+  emit();
+}
+
+export function publishPosted() {
+  const user = currentUser();
+  const draft = state.postDraft;
+  if (!user || !draft) return;
+  if (String(draft.title || "").trim().length < 4) return failPost(draft, "Номи корро равшантар нависед.");
+  if (!draft.budget || Number(draft.budget) <= 0) return failPost(draft, "Буҷетро нависед.");
+  if (!draft.deadline) return failPost(draft, "Мӯҳлатро интихоб кунед.");
+  const job = {
+    id: uid(),
+    employerId: user.id,
+    status: "published",
+    createdAt: Date.now(),
+    title: draft.title.trim(),
+    description: draft.description.trim(),
+    category: draft.category,
+    skills: draft.skills || [],
+    payAmount: Number(draft.budget),
+    payType: draft.payType === "hourly" ? "hourly" : "fixed",
+    deadline: draft.deadline,
+    date: draft.deadline,
+    timeStart: "09:00",
+    timeEnd: "18:00",
+    online: Boolean(draft.online),
+    location: draft.online ? "Онлайн" : draft.city,
+    vip: false,
+    rush: false,
+  };
+  state = {
+    ...state,
+    data: { ...state.data, jobs: [job, ...state.data.jobs] },
+    freshJobId: job.id,
+    postError: "",
+    filters: { q: "", location: "Ҳамаи шаҳрҳо", category: "Ҳама" },
+  };
+  notify("Кор нашр шуд ва дар бозор пайдо шуд.");
+  go("jobs");
+}
+
+export function detectProblem(text, fileName = "") {
+  const user = currentUser();
+  if (!user) return startFlow("solve");
+  const clean = String(text || "").trim();
+  if (clean.length < 8) {
+    state = { ...state, solveError: "Коратонро каме равшантар нависед." };
+    emit();
+    return;
+  }
+  const draft = understandRequest(clean, user.city);
+  const attached = String(fileName || "").trim();
+  if (attached) draft.fileName = attached;
+  state = { ...state, solveError: "", solveDraft: draft };
+  emit();
+}
+
+function solvedJob(user, draft, studentId) {
+  const fileNote = draft.fileName ? `\nФайл: ${draft.fileName}` : "";
+  return {
+    id: draft.jobId || uid(),
+    employerId: user.id,
+    status: "published",
+    createdAt: Date.now(),
+    title: String(draft.title || "").trim(),
+    description: `${String(draft.text || "").trim()}${fileNote}`,
+    category: draft.category,
+    skills: draft.skills || [],
+    payAmount: Number(draft.budget),
+    payType: draft.payType === "hourly" ? "hourly" : "fixed",
+    deadline: draft.deadline,
+    date: draft.deadline,
+    timeStart: "09:00",
+    timeEnd: "18:00",
+    online: Boolean(draft.online),
+    location: draft.online ? "Онлайн" : draft.city,
+    vip: false,
+    rush: false,
+    invitedStudentId: studentId || null,
+  };
+}
+
+export function chooseStudent(studentId) {
+  const user = currentUser();
+  const draft = state.solveDraft;
+  const student = state.data.users.find((item) => item.id === studentId && item.role === "student");
+  if (!user || !draft || !student) return;
+  if (student.id === user.id) {
+    notify("Худро интихоб карда наметавонед.");
+    return;
+  }
+  if (!draft.budget || Number(draft.budget) <= 0 || !draft.deadline) {
+    notify("Буҷет ва мӯҳлатро санҷед, баъд интихоб кунед.");
+    return;
+  }
+  if (draft.chosenId === student.id && draft.jobId) {
+    notify(`${student.name} аллакай интихоб шудааст.`);
+    return;
+  }
+  const job = solvedJob(user, draft, student.id);
+  const jobs = draft.jobId
+    ? state.data.jobs.map((item) => (item.id === draft.jobId ? { ...item, ...job, id: item.id, createdAt: item.createdAt } : item))
+    : [job, ...state.data.jobs];
+  const notifications = [note(student.id, `${employerName(user)} шуморо барои «${job.title}» интихоб кард.`), ...state.data.notifications];
+  state = {
+    ...state,
+    data: { ...state.data, jobs, notifications },
+    solveDraft: { ...draft, jobId: job.id, chosenId: student.id },
+    freshJobId: job.id,
+  };
+  notify(`${student.name} интихоб шуд. Кор ба ӯ фиристода шуд.`);
+  emit();
+}
+
+export function updateSolve(partial) {
+  if (!state.solveDraft) return;
+  state = { ...state, solveDraft: { ...state.solveDraft, ...partial } };
+  emit();
+}
+
+export function toggleSolveSkill(skill) {
+  if (!state.solveDraft) return;
+  const skills = new Set(state.solveDraft.skills || []);
+  if (skills.has(skill)) skills.delete(skill);
+  else skills.add(skill);
+  updateSolve({ skills: [...skills] });
+}
+
+export function publishSolved() {
+  const draft = state.solveDraft;
+  if (!draft) return;
+  if (draft.jobId) {
+    notify("Ин кор аллакай нашр шудааст.");
+    go("jobs");
+    return;
+  }
+  state = {
+    ...state,
+    postDraft: {
+      title: draft.title,
+      description: `${draft.text || ""}${draft.fileName ? `\nФайл: ${draft.fileName}` : ""}`,
+      category: draft.category,
+      skills: draft.skills || [],
+      budget: draft.budget,
+      payType: draft.payType,
+      deadline: draft.deadline,
+      online: draft.online,
+      city: draft.city,
+    },
+    postStep: 3,
+    postError: "",
+  };
+  publishPosted();
+}
+
+export function openProposal(jobId) {
+  const user = currentUser();
+  const job = state.data.jobs.find((item) => item.id === jobId);
+  state = { ...state, activeJobId: jobId, proposalError: "" };
+  if (!user) {
+    state = { ...state, pendingFlow: "find" };
+    notify("Барои пешниҳод аввал ворид шавед.");
+    openModal("login");
+    return;
+  }
+  if (!job || !isOpenStatus(job.status)) {
+    notify("Ин кор барои пешниҳод кушода нест.");
+    emit();
+    return;
+  }
+  if (job.employerId === user.id) {
+    notify("Ба кори худатон пешниҳод фиристода намешавад.");
+    emit();
+    return;
+  }
+  openModal("proposal");
+}
+
+export function sendProposal(input) {
+  const user = currentUser();
+  const jobId = state.activeJobId;
+  const job = state.data.jobs.find((item) => item.id === jobId);
+  if (!user || !job || !isOpenStatus(job.status) || job.employerId === user.id) return;
+  const price = Number(input.price);
+  const eta = String(input.eta || "").trim();
+  const message = String(input.message || "").trim();
+  if (!price || price <= 0) {
+    state = { ...state, proposalError: "Нархи пешниҳодиро нависед." };
+    emit();
+    return;
+  }
+  if (eta.length < 2) {
+    state = { ...state, proposalError: "Мӯҳлати иҷроро нависед." };
+    emit();
+    return;
+  }
+  if (message.length < 8) {
+    state = { ...state, proposalError: "Паёми кӯтоҳро нависед." };
+    emit();
+    return;
+  }
+  if (state.data.applications.some((item) => item.jobId === jobId && item.studentId === user.id)) {
+    state = { ...state, proposalError: "Шумо ба ин кор аллакай пешниҳод фиристодаед." };
+    emit();
+    return;
+  }
+  const application = {
+    id: uid(),
+    jobId,
+    studentId: user.id,
+    message,
+    price,
+    eta,
+    kind: "proposal",
+    status: "pending",
+    createdAt: Date.now(),
+  };
+  state = {
+    ...state,
+    data: {
+      ...state.data,
+      applications: [application, ...state.data.applications],
+      notifications: [note(job.employerId, `${user.name} ба «${job.title}» пешниҳоди ${price} сомонӣ фиристод.`), ...state.data.notifications],
+    },
+    modal: null,
+    proposalError: "",
+  };
+  notify("Пешниҳод фиристода шуд. Фармоишгар онро дар кабинет мебинад.");
+  celebrate();
+  emit();
+}
+
+primeBadges();

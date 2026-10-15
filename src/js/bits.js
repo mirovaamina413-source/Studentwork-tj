@@ -8,9 +8,8 @@ export function esc(value) {
 
 export function logo() {
   return `<span class="inline-flex items-center gap-2.5">
-    <svg viewBox="0 0 48 48" class="h-10 w-10" aria-hidden="true"><rect width="48" height="48" rx="14" fill="#0e4f3f"/><path d="M10 31V18.5L24 10l14 8.5V31" fill="none" stroke="#f3efe6" stroke-width="2.4"/><path d="M24 11.2l2.7 3.6 4 .3-3 2.6.9 3.9L24 19.6l-4.6 2 .9-3.9-3-2.6 4-.3 2.7-3.6z" fill="#d4a017"/><rect x="20.2" y="26" width="7.6" height="9" rx="1.4" fill="#f3efe6"/></svg>
+    <svg viewBox="0 0 48 48" class="h-10 w-10" aria-hidden="true"><rect width="48" height="48" rx="14" fill="#2E1A6A"/><path d="M10 31V18.5L24 10l14 8.5V31" fill="none" stroke="#f8fafc" stroke-width="2.4"/><path d="M24 11.2l2.7 3.6 4 .3-3 2.6.9 3.9L24 19.6l-4.6 2 .9-3.9-3-2.6 4-.3 2.7-3.6z" fill="#f59e0b"/><rect x="20.2" y="26" width="7.6" height="9" rx="1.4" fill="#f8fafc"/></svg>
     <span class="font-display text-[1.05rem] font-semibold tracking-tight">StudentWork<span class="text-gold">.tj</span></span>
-    <span class="brand-badge">TJ</span>
   </span>`;
 }
 
@@ -56,8 +55,8 @@ export function levelPill(name) {
 export function modalShell(title, subtitle, body, extraClass = "") {
   const fit = extraClass.includes("modal-card-fit");
   const frame = fit
-    ? "modal-card modal-card-fit relative w-full max-w-md overflow-hidden rounded-3xl border border-white/70 bg-white p-4 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:p-5"
-    : "modal-card relative max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-white/70 bg-white p-5 shadow-[0_30px_80px_rgba(15,23,42,0.28)] sm:p-7";
+    ? "modal-card modal-card-fit relative w-full max-w-md overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-900/80 p-4 shadow-2xl backdrop-blur-xl sm:p-5"
+    : "modal-card relative max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-800/80 bg-slate-900/80 p-5 shadow-2xl backdrop-blur-xl sm:p-7";
   return `<div class="modal-root fixed inset-0 z-50 flex items-end justify-center p-3 sm:items-center" role="dialog" aria-modal="true">
     <button type="button" class="modal-backdrop absolute inset-0" data-action="close" aria-label="Пӯшидан"></button>
     <div class="${frame}">

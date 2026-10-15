@@ -10,10 +10,24 @@ export const CATEGORIES = [
 
 export const JOB_CATEGORIES = CATEGORIES.filter((item) => item !== "Ҳама");
 
-export const LOCATIONS = ["Душанбе", "Ваҳдат", "Хуҷанд", "Бохтар", "Кӯлоб", "Истаравшан", "Турсунзода", "Хоруғ", "Рашт"];
+const MORE_CITIES = [
+  "Абдураҳмони Ҷомӣ", "Айнӣ", "Ашт", "Балҷувон", "Бобоҷон Ғафуров", "Бохтар", "Бустон",
+  "Ваҳдат", "Варзоб", "Вахш", "Данғара", "Дустӣ", "Ёвон", "Зафаробод", "Истаравшан",
+  "Истиқлол", "Исфара", "Ишкошим", "Конибодом", "Кӯлоб", "Қубодиён", "Лахш",
+  "Муминобод", "Мурғоб", "Норак", "Нуробод", "Панҷ", "Панҷакент", "Рашт", "Роғун",
+  "Роштқалъа", "Рӯдакӣ", "Рӯшон", "Сангвор", "Спитамен", "Темурмалик", "Тоҷикобод",
+  "Турсунзода", "Файзобод", "Фархор", "Ҳисор", "Хоруғ", "Хуросон", "Шаҳринав", "Шаҳритӯс", "Ҷомӣ",
+];
+
+export const LOCATIONS = ["Душанбе", "Хуҷанд", ...MORE_CITIES.sort((a, b) => a.localeCompare(b, "tg"))];
 
 export function isAllCities(value) {
   return !value || value === "Ҳама шаҳрҳо" || value === "Ҳамаи шаҳрҳо";
+}
+
+export function selectedCities(value) {
+  if (isAllCities(value)) return [];
+  return String(value).split("|").map((city) => city.trim()).filter(Boolean);
 }
 
 export const SKILLS = ["Тарҷума", "Барномасозӣ", "Дизайн", "Пешхизмат", "Доставка", "СММ"];
@@ -30,7 +44,7 @@ export const DAYS = [
 
 export const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
-export const VIEWS = ["home", "jobs", "employers", "students", "rankings", "studentDash", "employerDash", "safety", "inbox", "notices"];
+export const VIEWS = ["home", "jobs", "find", "post", "solve", "courses", "tasks", "employers", "students", "rankings", "studentDash", "employerDash", "safety", "inbox", "notices", "settings"];
 
 export const VIP_PIN_FEE = 20;
 
@@ -169,12 +183,18 @@ export function employerName(user) {
   return user.company || user.name;
 }
 
+export function isOpenStatus(status) {
+  return status === "open" || status === "published";
+}
+
 export function filterJobs(jobs, users, filters) {
   const query = (filters.q || "").trim().toLowerCase();
   return jobs.filter((job) => {
     if (job.status === "done") return false;
     if (filters.category && filters.category !== "Ҳама" && job.category !== filters.category) return false;
-    if (!isAllCities(filters.location) && job.location !== filters.location) return false;
+    const cities = selectedCities(filters.location);
+    if (cities.length && !cities.includes(job.location)) return false;
+    if (filters.pay && job.payType !== filters.pay) return false;
     if (!query) return true;
     const employer = users.find((user) => user.id === job.employerId);
     const blob = `${job.title} ${job.description} ${job.category} ${job.location} ${employer?.company || ""} ${employer?.name || ""}`.toLowerCase();

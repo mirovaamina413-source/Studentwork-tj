@@ -184,6 +184,19 @@ const employers = [
     hue: 12,
     bio: "Маркети маҳаллӣ. Корҳои кӯтоҳи анбор ва доставка.",
   },
+  {
+    id: "e5",
+    role: "employer",
+    name: "Манижа Раҳмонова",
+    company: "Тӯйхонаи Ситора",
+    email: "sitora@studentwork.tj",
+    phone: "+992 927 440 118",
+    password: "demo123",
+    city: "Хуҷанд",
+    verified: true,
+    hue: 280,
+    bio: "Тӯйхона барои тӯй ва чорабиниҳои шабона.",
+  },
 ];
 
 const jobs = [
@@ -317,7 +330,7 @@ const jobs = [
     timeEnd: "23:00",
     description: "Кумак дар толор: пешниҳоди нӯшокӣ ва ҷамъ кардани миз. Омӯзиши кӯтоҳ пеш аз оғоз.",
     location: "Хуҷанд",
-    employerId: "e3",
+    employerId: "e5",
     vip: true,
     rush: false,
     status: "open",
